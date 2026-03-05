@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# Django
+db.sqlite
+.env
+
+# Node
+node_modules/
+
+# Database
+migrations/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
