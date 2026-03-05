@@ -318,44 +318,67 @@
 
     /** Memuat data agenda untuk rentang tanggal aktif di kalender */
     async function loadAgenda(start, end) {
+        const startDate = new Date(start);
+        const endDate = new Date(end);
+        const startStr = startDate.toISOString();
+        const endStr = endDate.toISOString();
+        const year = startDate.getFullYear();
+
+        let eventsData = [];
+        let holidaysData = [];
+
+        // Fetch events independently
         try {
-            const startDate = new Date(start);
-            const endDate = new Date(end);
-            const startStr = startDate.toISOString();
-            const endStr = endDate.toISOString();
-            const year = startDate.getFullYear();
-            const [eventsResponse, holidaysResponse] = await Promise.all([
-                fetch(`/api/events/?start=${startStr}&end=${endStr}`),
-                fetch(`https://api-harilibur.vercel.app/api?year=${year}`)
-            ]);
-            const eventsData = await eventsResponse.json();
-            const holidaysData = await holidaysResponse.json();
-            const filteredEvents = eventsData.filter(event =>
-                event.kategori && event.kategori.toLowerCase() !== KATEGORI_PENGUMUMAN_LOWERCASE
-            );
-            const filteredHolidays = holidaysData
-                .filter(holiday => holiday.is_national_holiday)
-                .map(holiday => ({
-                    title: holiday.holiday_name,
-                    start: formatDateString(holiday.holiday_date),
-                    end: formatDateString(holiday.holiday_date),
-                    backgroundColor: '#ff0000',
-                    isHoliday: true,
-                    id: `holiday-${formatDateString(holiday.holiday_date)}`,
-                    deskripsi: 'Hari Libur Nasional'
-                }))
-                .filter(holiday => {
-                    const holidayDate = new Date(holiday.start);
-                    return holiday.start && !isNaN(holidayDate) && holidayDate >= startDate && holidayDate <= endDate;
-                });
-            const sortedAgenda = [...filteredEvents, ...filteredHolidays].sort((a, b) =>
-                new Date(a.start) - new Date(b.start)
-            );
-            renderAgenda(sortedAgenda);
+            const eventsResponse = await fetch(`/api/events/?start=${startStr}&end=${endStr}`);
+            if (eventsResponse.ok) {
+                eventsData = await eventsResponse.json();
+            } else {
+                console.warn('Gagal memuat events dari API lokal');
+            }
         } catch (err) {
-            console.error('Error memuat agenda:', err);
+            console.error('Error memuat events:', err);
+        }
+
+        // Fetch holidays independently
+        try {
+            const holidaysResponse = await fetch(`https://api-harilibur.vercel.app/api?year=${year}`);
+            if (holidaysResponse.ok) {
+                holidaysData = await holidaysResponse.json();
+            } else {
+                console.warn('Gagal memuat hari libur dari API eksternal');
+            }
+        } catch (err) {
+            console.error('Error memuat hari libur:', err);
+        }
+
+        const filteredEvents = (Array.isArray(eventsData) ? eventsData : []).filter(event =>
+            event.kategori && event.kategori.toLowerCase() !== KATEGORI_PENGUMUMAN_LOWERCASE
+        );
+
+        const filteredHolidays = (Array.isArray(holidaysData) ? holidaysData : [])
+            .filter(holiday => holiday.is_national_holiday)
+            .map(holiday => ({
+                title: holiday.holiday_name,
+                start: formatDateString(holiday.holiday_date),
+                end: formatDateString(holiday.holiday_date),
+                backgroundColor: '#ff0000',
+                isHoliday: true,
+                id: `holiday-${formatDateString(holiday.holiday_date)}`,
+                deskripsi: 'Hari Libur Nasional'
+            }))
+            .filter(holiday => {
+                const holidayDate = new Date(holiday.start);
+                return holiday.start && !isNaN(holidayDate) && holidayDate >= startDate && holidayDate <= endDate;
+            });
+
+        const sortedAgenda = [...filteredEvents, ...filteredHolidays].sort((a, b) =>
+            new Date(a.start) - new Date(b.start)
+        );
+
+        if (sortedAgenda.length === 0 && eventsData.length === 0 && (Array.isArray(holidaysData) && holidaysData.length === 0)) {
             agendaContainer.innerHTML = '<p>Gagal memuat agenda.</p>';
-            showCustomAlert('Gagal memuat data agenda.', 'error');
+        } else {
+            renderAgenda(sortedAgenda);
         }
     }
 
@@ -548,51 +571,66 @@
     }
 
     /** Memfilter dan menampilkan agenda berdasarkan pencarian */
-    window.filterAgenda = function () {
+    window.filterAgenda = async function () {
         const q = document.getElementById('search').value.toLowerCase();
         const calendarInstance = calendar;
         const viewStart = calendarInstance.view.activeStart.toISOString();
         const viewEnd = calendarInstance.view.activeEnd.toISOString();
         const year = calendarInstance.view.activeStart.getFullYear();
         let url = q ? `/api/events/?search=${encodeURIComponent(q)}` : `/api/events/?start=${viewStart}&end=${viewEnd}`;
-        Promise.all([
-            fetch(url),
-            fetch(`https://api-harilibur.vercel.app/api?year=${year}`)
-        ])
-            .then(([eventsResponse, holidaysResponse]) => Promise.all([eventsResponse.json(), holidaysResponse.json()]))
-            .then(([eventsData, holidaysData]) => {
-                const processedHolidays = holidaysData
-                    .filter(holiday => holiday.is_national_holiday)
-                    .map(holiday => ({
-                        title: holiday.holiday_name,
-                        start: formatDateString(holiday.holiday_date),
-                        end: formatDateString(holiday.holiday_date),
-                        backgroundColor: '#ff0000',
-                        isHoliday: true,
-                        id: `holiday-${formatDateString(holiday.holiday_date)}`,
-                        deskripsi: 'Hari Libur Nasional'
-                    }))
-                    .filter(holiday => holiday.start && !isNaN(new Date(holiday.start)));
-                let agendaList = q ? [
-                    ...eventsData,
-                    ...processedHolidays.filter(holiday =>
-                        holiday.title.toLowerCase().includes(q) ||
-                        (holiday.deskripsi && holiday.deskripsi.toLowerCase().includes(q))
-                    )
-                ] : [
-                    ...eventsData,
-                    ...processedHolidays.filter(holiday => {
-                        const holidayDate = new Date(holiday.start);
-                        return holidayDate >= new Date(viewStart) && holidayDate <= new Date(viewEnd);
-                    })
-                ];
-                const sortedAgenda = agendaList.sort((a, b) => new Date(a.start) - new Date(b.start));
-                renderAgenda(sortedAgenda);
+
+        let eventsData = [];
+        let holidaysData = [];
+
+        // Fetch events independently
+        try {
+            const eventsResponse = await fetch(url);
+            if (eventsResponse.ok) {
+                eventsData = await eventsResponse.json();
+            }
+        } catch (err) {
+            console.error('Error filtering events:', err);
+        }
+
+        // Fetch holidays independently
+        try {
+            const holidaysResponse = await fetch(`https://api-harilibur.vercel.app/api?year=${year}`);
+            if (holidaysResponse.ok) {
+                holidaysData = await holidaysResponse.json();
+            }
+        } catch (err) {
+            console.error('Error filtering holidays:', err);
+        }
+
+        const processedHolidays = (Array.isArray(holidaysData) ? holidaysData : [])
+            .filter(holiday => holiday.is_national_holiday)
+            .map(holiday => ({
+                title: holiday.holiday_name,
+                start: formatDateString(holiday.holiday_date),
+                end: formatDateString(holiday.holiday_date),
+                backgroundColor: '#ff0000',
+                isHoliday: true,
+                id: `holiday-${formatDateString(holiday.holiday_date)}`,
+                deskripsi: 'Hari Libur Nasional'
+            }))
+            .filter(holiday => holiday.start && !isNaN(new Date(holiday.start)));
+
+        let agendaList = q ? [
+            ...(Array.isArray(eventsData) ? eventsData : []),
+            ...processedHolidays.filter(holiday =>
+                holiday.title.toLowerCase().includes(q) ||
+                (holiday.deskripsi && holiday.deskripsi.toLowerCase().includes(q))
+            )
+        ] : [
+            ...(Array.isArray(eventsData) ? eventsData : []),
+            ...processedHolidays.filter(holiday => {
+                const holidayDate = new Date(holiday.start);
+                return holidayDate >= new Date(viewStart) && holidayDate <= new Date(viewEnd);
             })
-            .catch(err => {
-                console.error('Error filtering agenda:', err);
-                showCustomAlert('Gagal memfilter agenda.', 'error');
-            });
+        ];
+
+        const sortedAgenda = agendaList.sort((a, b) => new Date(a.start) - new Date(b.start));
+        renderAgenda(sortedAgenda);
     }
 
     /** Membuka tab baru untuk menambah kegiatan ke Google Calendar */
@@ -646,33 +684,48 @@
                 }
             },
             /** Mengambil data event untuk kalender */
-            events: function (fetchInfo, successCallback, failureCallback) {
-                Promise.all([
-                    fetch(`/api/events/?start=${fetchInfo.startStr}&end=${fetchInfo.endStr}`).then(res => res.json()),
-                    fetch(`https://api-harilibur.vercel.app/api?year=${fetchInfo.start.getFullYear()}`).then(res => res.json())
-                ])
-                    .then(([eventsData, holidaysData]) => {
-                        const filteredEvents = eventsData.filter(event =>
-                            event.kategori && event.kategori.toLowerCase() !== KATEGORI_PENGUMUMAN_LOWERCASE
-                        );
-                        const holidayEvents = holidaysData
-                            .filter(holiday => holiday.is_national_holiday)
-                            .map(holiday => ({
-                                title: holiday.holiday_name,
-                                start: formatDateString(holiday.holiday_date),
-                                end: formatDateString(holiday.holiday_date),
-                                backgroundColor: '#ff0000',
-                                borderColor: '#ff0000',
-                                allDay: true,
-                                isHoliday: true
-                            }))
-                            .filter(holiday => holiday.start);
-                        successCallback([...filteredEvents, ...holidayEvents]);
-                    })
-                    .catch(err => {
-                        console.error('Error loading events for FullCalendar:', err);
-                        failureCallback(err);
-                    });
+            events: async function (fetchInfo, successCallback, failureCallback) {
+                let eventsData = [];
+                let holidaysData = [];
+
+                // Fetch events independently
+                try {
+                    const eventsResponse = await fetch(`/api/events/?start=${fetchInfo.startStr}&end=${fetchInfo.endStr}`);
+                    if (eventsResponse.ok) {
+                        eventsData = await eventsResponse.json();
+                    }
+                } catch (err) {
+                    console.error('Error loading events for FullCalendar:', err);
+                }
+
+                // Fetch holidays independently
+                try {
+                    const holidaysResponse = await fetch(`https://api-harilibur.vercel.app/api?year=${fetchInfo.start.getFullYear()}`);
+                    if (holidaysResponse.ok) {
+                        holidaysData = await holidaysResponse.json();
+                    }
+                } catch (err) {
+                    console.error('Error loading holidays for FullCalendar:', err);
+                }
+
+                const filteredEvents = (Array.isArray(eventsData) ? eventsData : []).filter(event =>
+                    event.kategori && event.kategori.toLowerCase() !== KATEGORI_PENGUMUMAN_LOWERCASE
+                );
+
+                const holidayEvents = (Array.isArray(holidaysData) ? holidaysData : [])
+                    .filter(holiday => holiday.is_national_holiday)
+                    .map(holiday => ({
+                        title: holiday.holiday_name,
+                        start: formatDateString(holiday.holiday_date),
+                        end: formatDateString(holiday.holiday_date),
+                        backgroundColor: '#ff0000',
+                        borderColor: '#ff0000',
+                        allDay: true,
+                        isHoliday: true
+                    }))
+                    .filter(holiday => holiday.start);
+
+                successCallback([...filteredEvents, ...holidayEvents]);
             }
         });
         calendar.render();
