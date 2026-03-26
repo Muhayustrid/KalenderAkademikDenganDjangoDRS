@@ -1,5 +1,13 @@
 # KalenderAkademik-Capstone
 
+## Preview Aplikasi
+
+### Tampilan Beranda
+![Tampilan Beranda](preview/tampilan_beranda.png)
+
+### Tampilan Kalender
+![Tampilan Kalender](preview/tampilan_kalender.png)
+
 ## Prasyarat
 - Code editor (misalnya: Visual Studio Code).
 - Python 3.8+ (terinstal di sistem).
